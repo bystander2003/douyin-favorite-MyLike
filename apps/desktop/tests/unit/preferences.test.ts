@@ -116,9 +116,11 @@ it('persists application and playback preferences across restart without changin
       autoplay: false,
       seekStep: 30,
       wheelNavigation: false,
-      pauseOnBlur: true
+      pauseOnBlur: true,
+      confirmUnlike: true
     })
   })
+  expect(readPlaybackPreferences({}).confirmUnlike).toBe(false)
   store.call('close', undefined)
   const next = new Store(file)
   stores.push(next)
@@ -133,7 +135,8 @@ it('persists application and playback preferences across restart without changin
     autoplay: false,
     seekStep: 30,
     wheelNavigation: false,
-    pauseOnBlur: true
+    pauseOnBlur: true,
+    confirmUnlike: true
   })
   expect(next.call('accounts', undefined)).toHaveLength(1)
   expect(next.call('checkDatabase', {})).toMatchObject({ ok: true, issues: 0 })

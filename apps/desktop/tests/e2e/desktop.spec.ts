@@ -2368,25 +2368,62 @@ test('overlays expandable captions, selects speeds with a popup and highlights t
   await expect(speed).toHaveText('0.75x')
 })
 
-test('confirms a single unlike from playback, pauses media and retains the fixed queue metadata', async () => {
+test('unlikes from playback without confirmation by default, advances to next item, and stays on the last item', async () => {
   const { accountId } = await prepareQueue()
   await page.getByRole('button', { name: '顺序播放', exact: true }).click()
   await readyVideo()
-  await page.getByRole('button', { name: '取消当前点赞', exact: true }).click()
-  expect(await page.locator('video').evaluate((node) => (node as HTMLVideoElement).paused)).toBe(true)
+  const unlikeButton = page.getByRole('button', { name: '取消当前点赞', exact: true })
   const before = (await invoke('snapshot')).data.playback
-  const modal = page.getByRole('dialog', { name: '取消抖音点赞' })
-  await expect(modal).toContainText('1 条作品')
-  await modal.getByRole('button', { name: '确认取消抖音点赞', exact: true }).click()
+  await unlikeButton.click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect.poll(async () => (await invoke('snapshot')).data.playback?.index).toBe(1)
   await expect.poll(async () => (await invoke('snapshot')).data.unlike?.status).toBe('completed')
   const after = (await invoke('snapshot')).data
   expect(after.unlike).toMatchObject({ success: 1, unknown: 0, mode: 'single' })
-  expect(after.playback).toMatchObject({ queueId: before.queueId, total: 3 })
-  expect(after.playback.work.id).toBe(before.work.id)
+  expect(after.playback).toMatchObject({ queueId: before.queueId, total: 3, index: 1 })
   expect((await invoke('query', { accountId })).data.total).toBe(2)
   expect(
     new URLSearchParams(await app.evaluate(() => (globalThis as any).__mylikeUnlikeBody)).get('aweme_id')
   ).toBe(before.work.id)
+  const middle = (await invoke('snapshot')).data.playback
+  await readyVideo(1)
+  await page.getByRole('button', { name: '下一条', exact: true }).click()
+  await expect.poll(async () => (await invoke('snapshot')).data.playback?.index).toBe(2)
+  await readyVideo(2)
+  const last = (await invoke('snapshot')).data.playback
+  await unlikeButton.click()
+  await expect.poll(async () => (await invoke('snapshot')).data.unlike?.status).toBe('completed')
+  expect((await invoke('snapshot')).data.playback).toMatchObject({
+    queueId: before.queueId,
+    total: 3,
+    index: 2,
+    work: { id: last.work.id }
+  })
+  expect(await page.locator('video').evaluate((node) => (node as HTMLVideoElement).paused)).toBe(true)
+  await expect(page.locator('.player-notice')).toHaveCount(0)
+  expect((await invoke('query', { accountId })).data.total).toBe(1)
+  expect(
+    new URLSearchParams(await app.evaluate(() => (globalThis as any).__mylikeUnlikeBody)).get('aweme_id')
+  ).toBe(last.work.id)
+  const prefs = (await invoke('snapshot')).data.playbackPreferences
+  await invoke('playbackPreferences', { preferences: { ...prefs, confirmUnlike: true } })
+  await expect(unlikeButton).toHaveAttribute('title', /需确认/)
+  await page.getByRole('button', { name: '上一条', exact: true }).click()
+  await expect.poll(async () => (await invoke('snapshot')).data.playback?.index).toBe(1)
+  await readyVideo(1)
+  await unlikeButton.click()
+  expect(await page.locator('video').evaluate((node) => (node as HTMLVideoElement).paused)).toBe(true)
+  const modal = page.getByRole('dialog', { name: '取消抖音点赞' })
+  await expect(modal).toContainText('1 条作品')
+  await modal.getByRole('button', { name: '确认取消抖音点赞', exact: true }).click()
+  await expect.poll(async () => (await invoke('snapshot')).data.unlike?.status).toBe('completed')
+  expect((await invoke('snapshot')).data.playback).toMatchObject({
+    queueId: before.queueId,
+    total: 3,
+    index: 1,
+    work: { id: middle.work.id }
+  })
+  expect((await invoke('query', { accountId })).data.total).toBe(0)
   await expect(page.getByRole('button', { name: /点赞任务/ })).toHaveCount(0)
   await page.getByRole('button', { name: '返回内容库', exact: true }).click()
   await page.getByRole('button', { name: '任务', exact: true }).click()
@@ -3139,6 +3176,7 @@ test('persists general and playback settings, restores a visible window, and sho
   await page.getByLabel('进入作品自动播放', { exact: true }).uncheck()
   await page.getByLabel('滚轮切换作品', { exact: true }).uncheck()
   await page.getByLabel('失焦时暂停', { exact: true }).check()
+  await page.getByLabel('播放页取消点赞前二次确认', { exact: true }).check()
   await chooseOption('快进后退步长', '30 秒')
   await page.getByRole('button', { name: '数据与存储', exact: true }).click()
   await expect(page.getByRole('heading', { name: '数据与备份', exact: true })).toBeVisible()
@@ -3189,7 +3227,13 @@ test('persists general and playback settings, restores a visible window, and sho
   await launch('仪表盘')
   expect((await invoke('snapshot')).data).toMatchObject({
     appPreferences: { startupPage: 'dashboard', zoom: 1.1, motion: 'reduce' },
-    playbackPreferences: { autoplay: false, wheelNavigation: false, pauseOnBlur: true, seekStep: 30 }
+    playbackPreferences: {
+      autoplay: false,
+      wheelNavigation: false,
+      pauseOnBlur: true,
+      confirmUnlike: true,
+      seekStep: 30
+    }
   })
   const restored = await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0]!.getNormalBounds()
@@ -3210,6 +3254,7 @@ test('uses focused player shortcuts and keeps inputs and unlike confirmation pro
   await invoke('playbackPreferences', {
     preferences: {
       ...preferences,
+      confirmUnlike: true,
       shortcuts: { ...preferences.shortcuts, rateCycle: 'KeyV', original: 'KeyC' }
     }
   })

@@ -41,6 +41,7 @@ export function App() {
   const snapshotSequence = useRef(0)
   const dataKey = useRef('')
   const startupApplied = useRef(false)
+  const singleUnlikePending = useRef(false)
   const accountId = snapshot?.activeAccountId ?? null
   const account = snapshot?.accounts.find((a) => a.id === accountId)
   const playback = usePlayback(accountId, setError, () => void refresh().catch((e) => setError(e.message)))
@@ -426,13 +427,35 @@ export function App() {
             libraryRevision={snapshot?.libraryRevision ?? 0}
             unlike={() => {
               setError('')
-              if (playback.view)
-                setUnlikeTarget({
-                  accountId: playback.view.queue.accountId,
-                  ids: [playback.view.queue.work.id],
-                  source: playback.view.queue.source === 'favorites' ? 'favorites' : 'likes',
-                  mode: 'single'
+              const current = playback.view?.queue
+              if (!current) return
+              const source = current.source === 'favorites' ? 'favorites' : 'likes'
+              if (source === 'likes' && !preferences.value.confirmUnlike) {
+                if (singleUnlikePending.current) return
+                const scope = `${current.accountId}:${current.queueId}:${current.revision}`
+                const hasNext = current.index + 1 < current.total
+                singleUnlikePending.current = true
+                void perform('启动取消点赞任务', async () => {
+                  await call(
+                    window.mylike.invoke('unlikeStart', {
+                      accountId: current.accountId,
+                      workIds: [current.work.id],
+                      source: 'likes',
+                      mode: 'single'
+                    })
+                  )
+                  if (hasNext && playback.isCurrent(scope)) void playback.move('next')
+                }).finally(() => {
+                  singleUnlikePending.current = false
                 })
+                return
+              }
+              setUnlikeTarget({
+                accountId: current.accountId,
+                ids: [current.work.id],
+                source,
+                mode: 'single'
+              })
             }}
             queueOpen={queueOpen}
             setQueueOpen={setQueueOpen}
